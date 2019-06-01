@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 import myfunc.util as util
 from collections import deque
 from sklearn.decomposition import PCA
+import calendar
 #get_ipython().magic(u'matplotlib inline')
 
 
@@ -30,7 +31,7 @@ def Figure(Label, Prediction, bins):
     pl.ylabel('height(km)')
     pl.ylim([0,18])
     pl.legend()
-    pl.title('non-storm<=%d act=%d b=%d lat=[%.1f, %.1f] box=%dx%d'%(nostorm,act, coef_b,latmin, latmax, len(ldy),len(ldx)))
+    pl.title('isurf=%d non-storm<=%d act=%s b=%d lat=[%.1f, %.1f] box=%dx%d'%(isurf, nostorm,act, coef_b,latmin, latmax, len(ldy),len(ldx)))
     print('RMSE:'     , np.round(rmse(Label, Prediction) , 4))
     print('real RMSE:', np.round(Rmse(Label, Prediction) , 4))
     print('CC:'       , np.round(  cc(Label, Prediction) , 4))
@@ -69,7 +70,7 @@ def Figure(Label, Prediction, bins):
     pl.plot([0,35],[0,35],'k')
     pl.xlabel('Observation(km)')
     pl.ylabel('Prediction(km)')
-    pl.title('Correlation')
+    pl.title('CC=%.2f'%(corr))
     pl.grid()
     pl.colorbar()
     
@@ -83,13 +84,19 @@ def Figure(Label, Prediction, bins):
     #pl.title('Correlation')
     #pl.grid()
 
-    figPath = '/mnt/c/ubuntu/fig/fig2.png'
+    figPath = '/mnt/c/ubuntu/fig/train.%s.png'%(expr)
     pl.savefig(figPath)
     pl.clf()
-
+    print figPath
 
 
 def FFN(TraX, TraY, TesX, TesY, learning_rate, epochs, batch_size, dim, act): 
+    #ckptDir = '/work/hk01/utsumi/PMM/stop/ml-param-%d'%(act)
+    ckptDir = '/mnt/j/PMM/stop/ml-param/%s'%(expr)
+    util.mk_dir(ckptDir)
+    ckptPath= ckptDir + '/stop.%02d'%(isurf)
+
+
     fn1 = tf.nn.sigmoid
     fn2 = tf.nn.relu
     def fn3(x):
@@ -113,7 +120,7 @@ def FFN(TraX, TraY, TesX, TesY, learning_rate, epochs, batch_size, dim, act):
         cost = tf.sqrt(tf.reduce_mean(tf.reduce_mean(tf.square(Y - A[-1]) ))) 
     elif act == 1:
         cost = tf.sqrt(tf.reduce_mean(tf.reduce_mean(tf.square(Y - A[-1])*error_function(Y,label,100,12,1,coef_b) ))) 
-    elif act == 2:
+    else:
         cost = tf.sqrt(tf.reduce_mean(tf.reduce_mean(tf.square(Y - A[-1])*my_error_func(Y, coef_poly )))) 
 
     gogo = tf.train.AdamOptimizer(learning_rate).minimize(cost)
@@ -123,6 +130,7 @@ def FFN(TraX, TraY, TesX, TesY, learning_rate, epochs, batch_size, dim, act):
     prediction=tf.add(tf.matmul(A[-2], W[-1]), b[-1], name='pred')  # for Save
     sess = tf.Session()
     sess.run(tf.global_variables_initializer())
+
 
     #*** Saver ********
     saver = tf.train.Saver(max_to_keep=3)
@@ -135,15 +143,12 @@ def FFN(TraX, TraY, TesX, TesY, learning_rate, epochs, batch_size, dim, act):
             training_error = sess.run(cost, feed_dict = feed1)
             prediction     = sess.run(A[-1], feed_dict = {X:TesX})
             test_error     = sess.run(rmse, feed_dict = {real:TesY, pred:prediction})
-        if epoch % int(epochs/5) == 0:    
+        if epoch % 10 == 0:    
             print('Training Error:',training_error,'and','Testing Error:', test_error)
 
             #**** Save **********************
-            #ckptDir = '/work/hk01/utsumi/PMM/stop/ml-param-%d'%(act)
-            ckptDir = '/mnt/j/PMM/stop/ml-param/%s'%(expr)
-            util.mk_dir(ckptDir)
-            ckptPath= ckptDir + '/stop.%02d'%(isurf)
-            sv = saver.save(sess, ckptPath)
+            if savemodel ==1:
+                sv = saver.save(sess, ckptPath)
             #******************************** 
             
     return prediction
@@ -223,7 +228,7 @@ def f_act(x,label):
 
 
 
-def read_Tc(lDTime=None, ldydx=None, isurf=None):
+def read_Tc(lDTime=None, ldydx=None, isurf=None, samplerate=None, ch='LH'):
     a2tc = deque([])
     for DTime in lDTime:
         Year,Mon,Day = DTime.timetuple()[:3]
@@ -233,26 +238,47 @@ def read_Tc(lDTime=None, ldydx=None, isurf=None):
             srcDir = '/mnt/j/PMM/stop/data/Tc/%04d/%02d/%02d'%(Year,Mon,Day)
             srcPath1=srcDir + '/Tc1.%ddy.%ddx.%02dsurf.npy'%(dy,dx,isurf)
             srcPath2=srcDir + '/Tc2.%ddy.%ddx.%02dsurf.npy'%(dy,dx,isurf)
-            if not os.path.exists(srcPath1): continue
-            atc1 = np.load(srcPath1)
-            atc2 = np.load(srcPath2)
-            atc  = np.c_[atc1, atc2]
+            if not os.path.exists(srcPath1):
+                print 'No file',srcPath1
+                continue
 
-            try:
-                a2tcTmp = np.c_[a2tcTmp, atc]
-            except ValueError:
+            if ch=='LH':
+                atc1 = np.load(srcPath1)
+                atc2 = np.load(srcPath2)
+                atc  = np.c_[atc1, atc2]
+            elif ch=='L':
+                atc  = np.load(srcPath1)
+            else:
+                print 'check ch',ch
+                sys.exit()
+
+            if atc.shape[0]==0:
+                continue
+
+            if a2tcTmp is None:
                 a2tcTmp = atc
+            else:
+                a2tcTmp = np.c_[a2tcTmp, atc]
 
         if a2tcTmp is None:
             continue
         else:
             a2tcTmp = np.array(a2tcTmp)
+
+        #**********************
+        # Resample
+        #**********************
+        if samplerate is not None:
+            np.random.seed(0)  # Do not change !!
+            aidx = np.random.choice(range(a2tcTmp.shape[0]), int(a2tcTmp.shape[0]*samplerate), replace=False)
+
+            a2tcTmp = a2tcTmp[a1idx,:]            
         #**********************
         a2tc.extend(a2tcTmp)
 
     return np.array(a2tc)
 
-def read_var_collect(varName=None, lDTime=None, ldydx=None, isurf=None):
+def read_var_collect(varName=None, lDTime=None, ldydx=None, isurf=None, samplerate=None):
     a2var = deque([])
     for DTime in lDTime:
         Year,Mon,Day = DTime.timetuple()[:3]
@@ -261,13 +287,29 @@ def read_var_collect(varName=None, lDTime=None, ldydx=None, isurf=None):
             #srcDir = '/work/hk01/utsumi/PMM/stop/data/Tc/%04d/%02d/%02d'%(Year,Mon,Day)
             srcDir = '/mnt/j/PMM/stop/data/%s/%04d/%02d/%02d'%(varName,Year,Mon,Day)
             srcPath=srcDir + '/%s.%ddy.%ddx.%02dsurf.npy'%(varName,dy,dx,isurf)
-            if not os.path.exists(srcPath): continue
+            if not os.path.exists(srcPath):
+                print 'No file',srcPath
+                continue
             avar = np.load(srcPath)
 
-            try:
-                a2varTmp = np.c_[a2varTmp, avar]
-            except ValueError:
+            if avar.shape[0]==0:
+                continue
+
+            if a2varTmp is None:
                 a2varTmp = avar
+            else:
+                a2varTmp = np.c_[a2varTmp, avar]
+
+        #**********************
+        # Resample
+        #**********************
+        if samplerate is not None:
+            np.random.seed(0)  # Do not change !!
+            aidx = np.random.choice(range(a2varTmp.shape[0]), int(a2varTmp.shape[0]*samplerate), replace=False)
+
+            a2varTmp = a2varTmp[a1idx,:] 
+        #**********************
+
 
         if a2varTmp is None:
             continue
@@ -301,232 +343,279 @@ def my_unit(x,Min,Max):
 
 print 'Define functions'
 #***********************************************************
-# Main loop
+# Main loop start
 #***********************************************************
+Year  = 2017
 lMon   = [1]
-lisurf = [3]
-lkey = [[Mon,isurf] for Mon in lMon for isurf in lisurf]
-for (Mon,isurf) in lkey:
-  #llatminmax = [[-90,20]]
-  llatminmax = [[-20,20]]
+lisurf = [4]
+epochs = 200
+coef_b = 5
+saveprep = 1
+savemodel= 1
+restmodel = 0
+#act    = 'LH'
+#act    = 'L'
+act    = 'LT'
+llatminmax = [[-90,90]]
+for isurf in lisurf:
+    for Mon in lMon:
+        samplerate = 1.0
+        #************************
+        # Sample rate
+        #************************
+        if Mon ==0:
+            if isurf==1:
+                samplerate = 0.08
+            elif isurf in [3,13]:
+                samplerate = 0.5
+            else:
+                samplerate = 1.0 
+        else:
+            if isurf == 1:
+                samplerate = 0.3
+            else:
+                samplerate = 1.0
+        #************************
+        
+        for (latmin,latmax) in llatminmax:
+            ldy   = [-1,0,1]
+            ldx   = [-3,-2,-1,0,1,2,3]
+            #ldx   = [-2,-1,0,1,2]
+            imid  = int((len(ldy)*len(ldx)-1)/2)
+            ldydx = [[dy,dx] for dy in ldy for dx in ldx]
+            #
+            if   Mon == 0:
+                lDTime = util.ret_lDTime(datetime(Year,1,1), datetime(Year,12,31),timedelta(days=1))
+            
+            else:
+                eDay = calendar.monthrange(Year,Mon)[1]
+                lDTime = util.ret_lDTime(datetime(Year,Mon,1), datetime(Year,Mon,eDay), timedelta(days=1))
+ 
+            np.random.seed(0)
+            np.random.shuffle(lDTime)
+            
+            #lDTime = lDTime[:int(len(lDTime)*samplerate)]
+            lDTime_train = lDTime[: int(len(lDTime)*0.8)]
+            lDTime_valid = lDTime[int(len(lDTime)*0.8):]
+            
+            print 'Days (train, valid)',len(lDTime_train), len(lDTime_valid)
+            
+            #****************************************************
+            # Read data
+            #****************************************************
+            if act in ['LH']:  ch= 'LH'
+            elif act in ['L']: ch= 'L'
 
-  for (latmin,latmax) in llatminmax:
-    samplerate = 0.3
-    Year  = 2017
-    Mon   = 1
-    ldy   = [-1,0,1]
-    ldx   = [-3,-2,-1,0,1,2,3]
-    #ldx   = [-2,-1,0,1,2]
-    imid  = int((len(ldy)*len(ldx)-1)/2)
-    ldydx = [[dy,dx] for dy in ldy for dx in ldx]
-    isurf = 1
-    #ldays_train,ldays_valid = mk_daylist(days=31, rat_train=0.2)
-    #lDTime_train = [datetime(2017,1,1)+timedelta(days=i) for i in ldays_train]
-    #lDTime_valid = [datetime(2017,1,1)+timedelta(days=i) for i in ldays_valid]
-    #
-    #
-    if Mon == 1:
-        #lDTime = util.ret_lDTime(datetime(Year,1,1), datetime(Year,2,28),timedelta(days=1))
-        #lDTime = lDTime + util.ret_lDTime(datetime(Year,12,1), datetime(Year,12,31), timedelta(days=1))
-        lDTime = util.ret_lDTime(datetime(Year,1,1), datetime(Year,1,31),
-    timedelta(days=1))
-    
-    else:
-        eDay = calendar.monthrange(Year,Mon+1)[1]
-        lDTime = util.ret_lDTime(datetime(Year,1,1), datetime(Year,2,eDay)
-    , timedelta(days=1))
+            trainTc   = read_Tc(lDTime_train, ldydx, isurf, ch=ch)
+            validTc   = read_Tc(lDTime_valid, ldydx, isurf, ch=ch)
 
-    np.random.seed(0)
-    np.random.shuffle(lDTime)
-    
-    lDTime = lDTime[:int(len(lDTime)*samplerate)]
-    lDTime_train = lDTime[: int(len(lDTime)*0.7)]
-    lDTime_valid = lDTime[int(len(lDTime)*0.7):]
-    
-    print 'Days (train, valid)',len(lDTime_train), len(lDTime_valid)
-    
-    #****************************************************
-    # Read data
-    #****************************************************
-    trainTc   = read_Tc(lDTime_train, ldydx, isurf)
-    #trainStop = read_var_collect('stop', lDTime_train, ldydx, isurf)
-    trainStop = read_var_collect('stop', lDTime_train, [[0,0]], isurf)
-    trainLat  = read_var_collect('Latitude', lDTime_train, [[0,0]], isurf)
-    
-    validTc   = read_Tc(lDTime_valid, ldydx, isurf)
-    #validStop = read_var_collect('stop', lDTime_valid, ldydx, isurf)
-    validStop = read_var_collect('stop', lDTime_valid, [[0,0]], isurf)
-    validLat  = read_var_collect('Latitude', lDTime_valid, [[0,0]], isurf)
-    
-    
-    print trainTc.shape, trainStop.shape, trainLat.shape
-    print validTc.shape, validStop.shape, validLat.shape
-    
-    #****************************************************
-    # Screen latitude
-    #****************************************************
-    #latmin = -30
-    #latmax = 30
-    #latmin=-90
-    #latmax=-20
-    
-    index_keep = []
-    for i in range(trainTc.shape[0]):
-        lat = trainLat[i]
-        if (latmin<=lat)and(lat<=latmax):
-            index_keep.append(i)
-    
-    trainTc   = trainTc[index_keep]
-    trainStop = trainStop[index_keep]
-    trainLat  = trainLat[index_keep]
+            trainStop = read_var_collect('stop', lDTime_train, [[0,0]], isurf)
+            validStop = read_var_collect('stop', lDTime_valid, [[0,0]], isurf)
+
+            trainLat  = read_var_collect('Latitude', lDTime_train, [[0,0]], isurf)
+            validLat  = read_var_collect('Latitude', lDTime_valid, [[0,0]], isurf)
+
+            if 'T' in act:
+                trainT2m = read_var_collect('t2m', lDTime_train, [[0,0]], isurf)
+                validT2m = read_var_collect('t2m', lDTime_valid, [[0,0]], isurf)
+            
+            
+            print trainTc.shape, trainStop.shape, trainLat.shape
+            print validTc.shape, validStop.shape, validLat.shape
+            #****************************************************
+            # Screen invalid Tc
+            #****************************************************
+            a1flagtc = ma.masked_inside(trainTc, 50, 350).all(axis=1).mask
+            trainTc  = trainTc  [a1flagtc]
+            trainStop= trainStop[a1flagtc]
+            trainLat = trainLat [a1flagtc]
     
     
-    index_keep = []
-    for i in range(validTc.shape[0]):
-        lat = validLat[i]
-        if (latmin<=lat)and(lat<=latmax):
-            index_keep.append(i)
+            a1flagtc = ma.masked_inside(validTc, 50, 350).all(axis=1).mask
+            validTc  = validTc  [a1flagtc]
+            validStop= validStop[a1flagtc]
+            validLat = validLat [a1flagtc]
+            print 'After Tc screening'
+            print trainTc.shape, trainStop.shape, trainLat.shape
+            print validTc.shape, validStop.shape, validLat.shape
+            print 'trainTc.min, max=',trainTc.min(), trainTc.max()
     
-    validTc   = validTc[index_keep]
-    validStop = validStop[index_keep]
-    validLat  = validLat[index_keep]
+            #****************************************************
+            # Screen latitude
+            #****************************************************
+            #latmin = -30
+            #latmax = 30
+            #latmin=-90
+            #latmax=-20
+            
+            index_keep = []
+            for i in range(trainTc.shape[0]):
+                lat = trainLat[i]
+                if (latmin<=lat)and(lat<=latmax):
+                    index_keep.append(i)
+            
+            trainTc   = trainTc[index_keep]
+            trainStop = trainStop[index_keep]
+            trainLat  = trainLat[index_keep]
+            
+            
+            index_keep = []
+            for i in range(validTc.shape[0]):
+                lat = validLat[i]
+                if (latmin<=lat)and(lat<=latmax):
+                    index_keep.append(i)
+            
+            validTc   = validTc[index_keep]
+            validStop = validStop[index_keep]
+            validLat  = validLat[index_keep]
+            
     
+            
+            #****************************************************
+            # Screen number of storms in each box
+            #****************************************************
+            nstorm = 1
+            #nstorm = 21
+            nostorm = len(ldy)*len(ldx)-nstorm
+            if nstorm >1:
+                a1flagstop = ((trainStop>=0).sum(axis=1) >=nstorm)
+                trainTc   = trainTc[a1flagstop]
+                trainStop = trainStop[a1flagstop]
+                trainStop = trainStop[:,imid].reshape(-1,1)
+            
+                a1flagstop = ((validStop>=0).sum(axis=1) >=nstorm)
+                validTc   = validTc[a1flagstop]
+                validStop = validStop[a1flagstop]
+                validStop = validStop[:,imid].reshape(-1,1)
+            
+            
+            trainStop = trainStop.reshape(-1,1)
+            validStop = validStop.reshape(-1,1)
+            print trainTc.shape, trainStop
     
-    #****************************************************
-    # Screen number of storms in each box
-    #****************************************************
-    nstorm = 1
-    #nstorm = 21
-    nostorm = len(ldy)*len(ldx)-nstorm
-    if nstorm >1:
-        a1flagstop = ((trainStop>=0).sum(axis=1) >=nstorm)
-        trainTc   = trainTc[a1flagstop]
-        trainStop = trainStop[a1flagstop]
-        trainStop = trainStop[:,imid].reshape(-1,1)
+            
+            #****************************************************
+            # PCA
+            #****************************************************
+            amean = trainTc.mean(axis=0)
+            astd  = trainTc.std(axis=0)
+            #pca = PCA(n_components=restriction)
+            pca = PCA()
+            pca.fit((trainTc-amean)/astd)
+            a2egvec=pca.components_
+            #a1egval=pca.explained_variance
+            a1varratio=pca.explained_variance_ratio_
     
-        a1flagstop = ((validStop>=0).sum(axis=1) >=nstorm)
-        validTc   = validTc[a1flagstop]
-        validStop = validStop[a1flagstop]
-        validStop = validStop[:,imid].reshape(-1,1)
-    
-    
-    trainStop = trainStop.reshape(-1,1)
-    validStop = validStop.reshape(-1,1)
-    print trainTc.shape, trainStop
-    
-    #****************************************************
-    # PCA
-    #****************************************************
-    restriction = 10
-    #restriction = 20
-    amean = trainTc.mean(axis=0)
-    astd  = trainTc.std(axis=0)
-    pca = PCA(n_components=restriction)
-    pca.fit((trainTc-amean)/astd)
-    a2egvec=pca.components_
-    #a1egval=pca.explained_variance
-    a1varratio=pca.explained_variance_ratio_
-    
-    
-    trainTc = (trainTc-amean)/astd
-    validTc = (validTc-amean)/astd
-    
-    #reduction = np.dot(trainTc, a2egvec[:restriction,:].T)
-    trainReduction = np.dot(trainTc, a2egvec[:restriction,:].T)
-    validReduction = np.dot(validTc, a2egvec[:restriction,:].T)
-    
-    
-    #****************************************************
-    #*** Save preprocess parameters *******
-    #****************************************************
-    preptype = 'nynx.%dx%d.isurf.%d.Mon.%d.Lat.%d.%d'%(len(ldy),len(ldx),isurf,Mon,latmin,latmax)
-    paramDir = '/mnt/j/PMM/stop/prep-param/%s'%(preptype)
-    util.mk_dir(paramDir)
-    
-    #*** Save Tc mean, std *******
-    meanPath = paramDir + '/mean.Tc.npy'
-    stdPath  = paramDir + '/std.Tc.npy'
-    np.save(meanPath, amean)
-    np.save(stdPath,  astd)
-    
-    #*** PC coefficient (eigen vector)
-    egvecPath = paramDir + '/egvec.npy'
-    #egvalPath = paramDir + '/egval.npy'
-    varratioPath = paramDir + '/varratio.npy'
-    np.save(egvecPath, a2egvec.astype('float32'))
-    np.save(varratioPath, a1varratio.astype('float32'))
-    
-    #*** PC min, max ***************
-    minPath = paramDir + '/pc.min.npy'
-    maxPath = paramDir + '/pc.max.npy'
-    np.save(minPath, trainReduction.min(axis=0))
-    np.save(maxPath, trainReduction.max(axis=0))
-    print minPath
-    #***********************************************************
-    # Normalize
-    #***********************************************************
-    MinStop = 0
-    MaxStop = 32000
-    MinRed  = trainReduction.min(axis=0)
-    MaxRed  = trainReduction.max(axis=0)
-    
-    aidx = np.random.choice(np.arange(len(trainStop)), len(trainStop))
-    nTrain = int(len(aidx)*0.9)
-    aidxTrain = aidx[:nTrain]
-    aidxTest  = aidx[nTrain:]
-    
-    trainX = my_unit(trainReduction, MinRed, MaxRed)
-    trainY = my_unit(trainStop,MinStop,MaxStop)
-    testX = my_unit(validReduction, MinRed, MaxRed)
-    testY = my_unit(validStop,MinStop,MaxStop)
-    
-    #print 'reduction=',reduction
-    print 'reduction.min, max',trainReduction.min(), trainReduction.max()
-    print 'trainX.min, max', trainX.min(), trainX.max()
-    print 'testX.min, max', testX.min(), testX.max()
+            a1cumrat = np.cumsum(a1varratio)
+            restriction_opt= ma.masked_greater(a1cumrat,0.99).argmax()
+            restriction = 10
+            #restriction = 20
+            print 'restriction_opt=',restriction_opt
+            print 'restriction    =',restriction
     
     
-    x = np.arange(100001)/float(100000)
-    pl.figure(figsize=(14,4))
-    pl.subplot(131)
-    pl.plot(x,f_act(x,trainY))
-    #pl.plot(np.arange(len(trainY))/float(len(trainY)-1),np.sort(unit(trainY.flatten())))
-    pl.plot(np.arange(len(trainY))/float(len(trainY)-1),np.sort(my_unit(trainY.flatten(),MinStop,MaxStop)))
-    pl.subplot(132)
-    pl.plot(x, error_function(x, trainY, 100, 12, 1, 10))
-    pl.subplot(133)
-    _,_,_ = pl.hist(trainY, 100)
-    
-    figPath = '/mnt/c/ubuntu/fig/fig1.png'
-    pl.savefig(figPath)
-    pl.clf()
-    
-    #***********************************************************
-    # Learning
-    #***********************************************************
-    
-    degree = 12
-    coef_b = 5
-    coef_poly  = mk_coef_polyfit(testY, degree, coef_b)
+            trainTc = (trainTc-amean)/astd
+            validTc = (validTc-amean)/astd
+            
+            #reduction = np.dot(trainTc, a2egvec[:restriction,:].T)
+            trainReduction = np.dot(trainTc, a2egvec[:restriction,:].T)
+            validReduction = np.dot(validTc, a2egvec[:restriction,:].T)
     
     
-    # Apply error function
-    #Train, Label = unit(reduction), unit(label)
-    #ntrain       = int(0.7*len(reduction))
-    print(trainX.shape, trainY.shape, testX.shape, testY.shape)
-    #dim = [trainX.shape[2], 30, 30, 30,10, trainY.shape[1]]
-    dim = [trainX.shape[1], 30, 30, 30,10, trainY.shape[1]]
-    act = 2
-    expr= 'surf%d.b%d.lat.%d.%d'%(isurf,coef_b,latmin,latmax)
-    prediction   = FFN(trainX, trainY, testX, testY, 0.005, 50, 1024*4, dim, act)
-    #prediction   = FFN(trainX, trainY, testX, testY, 0.005, 150, 1024*4, dim, act)
-    print 'testX.min, max', testX.min(), testX.max()
-    print 'testY.min, max', testY.min(), testY.max()
-    print 'prediction.min, max',prediction.min(),prediction.max()
-    print prediction.min(),prediction.max()
-    
-    #***********************************************************
-    # Figure
-    #***********************************************************
-    Figure(testY, prediction, 50)
+            
+            
+            #****************************************************
+            #*** Save preprocess parameters *******
+            #****************************************************
+            if saveprep ==1:
+                preptype = 'nynx.%dx%d.isurf.%d.Mon.%d.Lat.%d.%d'%(len(ldy),len(ldx),isurf,Mon,latmin,latmax)
+                paramDir = '/mnt/j/PMM/stop/prep-param/%s'%(preptype)
+                util.mk_dir(paramDir)
+                
+                #*** Save Tc mean, std *******
+                meanPath = paramDir + '/mean.Tc.npy'
+                stdPath  = paramDir + '/std.Tc.npy'
+                np.save(meanPath, amean)
+                np.save(stdPath,  astd)
+                
+                #*** PC coefficient (eigen vector)
+                egvecPath = paramDir + '/egvec.npy'
+                #egvalPath = paramDir + '/egval.npy'
+                varratioPath = paramDir + '/varratio.npy'
+                np.save(egvecPath, a2egvec.astype('float32'))
+                np.save(varratioPath, a1varratio.astype('float32'))
+                
+                #*** PC min, max ***************
+                minPath = paramDir + '/pc.min.npy'
+                maxPath = paramDir + '/pc.max.npy'
+                np.save(minPath, trainReduction.min(axis=0))
+                np.save(maxPath, trainReduction.max(axis=0))
+                print minPath
+            #***********************************************************
+            # Normalize
+            #***********************************************************
+            MinStop = 0
+            MaxStop = 32000
+            MinRed  = trainReduction.min(axis=0)
+            MaxRed  = trainReduction.max(axis=0)
+            
+            aidx = np.random.choice(np.arange(len(trainStop)), len(trainStop))
+            nTrain = int(len(aidx)*0.9)
+            aidxTrain = aidx[:nTrain]
+            aidxTest  = aidx[nTrain:]
+            
+            trainX = my_unit(trainReduction, MinRed, MaxRed)
+            trainY = my_unit(trainStop,MinStop,MaxStop)
+            testX = my_unit(validReduction, MinRed, MaxRed)
+            testY = my_unit(validStop,MinStop,MaxStop)
+            
+            #print 'reduction=',reduction
+            print 'reduction.min, max',trainReduction.min(), trainReduction.max()
+            print 'trainX.min, max', trainX.min(), trainX.max()
+            print 'testX.min, max', testX.min(), testX.max()
+            
+            
+            x = np.arange(100001)/float(100000)
+            pl.figure(figsize=(14,4))
+            pl.subplot(131)
+            pl.plot(x,f_act(x,trainY))
+            #pl.plot(np.arange(len(trainY))/float(len(trainY)-1),np.sort(unit(trainY.flatten())))
+            pl.plot(np.arange(len(trainY))/float(len(trainY)-1),np.sort(my_unit(trainY.flatten(),MinStop,MaxStop)))
+            pl.subplot(132)
+            pl.plot(x, error_function(x, trainY, 100, 12, 1, 10))
+            pl.subplot(133)
+            _,_,_ = pl.hist(trainY, 100)
+            
+            figPath = '/mnt/c/ubuntu/fig/fig1.png'
+            pl.savefig(figPath)
+            pl.clf()
+            
+            #***********************************************************
+            # Learning
+            #***********************************************************
+            
+            degree = 12
+            coef_poly  = mk_coef_polyfit(testY, degree, coef_b)
+            
+            
+            # Apply error function
+            #Train, Label = unit(reduction), unit(label)
+            #ntrain       = int(0.7*len(reduction))
+            print(trainX.shape, trainY.shape, testX.shape, testY.shape)
+            #dim = [trainX.shape[2], 30, 30, 30,10, trainY.shape[1]]
+            dim = [trainX.shape[1], 30, 30, 30,10, trainY.shape[1]]
+            expr= 'act.%s.surf%d.b%d.lat.%d.%d'%(act,isurf,coef_b,latmin,latmax)
+            prediction   = FFN(trainX, trainY, testX, testY, 0.005, epochs, 1024*4, dim, act)
+            #prediction   = FFN(trainX, trainY, testX, testY, 0.005, 150, 1024*4, dim, act)
+            print 'testX.min, max', testX.min(), testX.max()
+            print 'testY.min, max', testY.min(), testY.max()
+            print 'prediction.min, max',prediction.min(),prediction.max()
+            print prediction.min(),prediction.max()
+            print 'isurf=',isurf 
+            print 'testX.shape=',testX.shape
+            #***********************************************************
+            # Figure
+            #***********************************************************
+            corr = np.corrcoef(testY, prediction)[0,1]
+            Figure(testY, prediction, 50)
     

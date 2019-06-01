@@ -13,16 +13,16 @@ varName = 'nltb'
 iYM = [2017,1]
 eYM = [2017,1]
 lYM = util.ret_lYM(iYM,eYM)
-verGMI = '05'
-subverGMI = 'A'
-fullverGMI = '%s%s'%(verGMI,subverGMI)
 miss = -9999.
 ldy   = [0]
 ldx   = [0]
 Shape = [len(ldy),len(ldx)]
 ldydx = [[dy,dx] for dy in ldy for dx in ldx]
-varNameFull= 'S1.ABp103-117.GMI.Latitude'
+#varNameFull= 'S1.ABp103-117.GMI.Latitude'
+varNameFull= 'S1.ABp000-220.MERRA2.t2m'
 varName = varNameFull.split('.')[-1]
+
+ix,ex = map(int, varNameFull.split('.')[1][3:].split('-'))
 #**** Function *****************
 def shift_array(ain=None, dy=None,dx=None,miss=-9999):
     ny,nx,nz = ain.shape
@@ -93,6 +93,10 @@ for (dy,dx) in ldydx:
                 varDir  = matchBaseDir + '/%s/%04d/%02d/%02d'%(varNameFull,Year,Mon,Day)
                 datPath = varDir + '/%s.%06d.npy'%(varName, oid)
                 a2dat   = np.load(datPath) 
+                #-- Trim to 103-117 -----
+                if (ix,ex) is not (103,117):
+                    a2dat = a2dat[:,103-ix:117-ix+1]
+
                 #--- shift --------------
                 nytmp,nxtmp = a2dat.shape 
                 a2shift = shift_array(a2dat.reshape(nytmp,nxtmp,1),dy,dx,-9999.).reshape(nytmp,nxtmp)
