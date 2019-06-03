@@ -37,8 +37,7 @@ def mk_daylist(days=None, rat_train=1.0):
 
     return a1idx_train,a1idx_valid
 
-
-def read_Tc(lDTime=None, ldydx=None, isurf=None):
+def read_Tc(lDTime=None, ldydx=None, isurf=None, samplerate=None, ch='LH'):
     a2tc = deque([])
     for DTime in lDTime:
         Year,Mon,Day = DTime.timetuple()[:3]
@@ -48,26 +47,48 @@ def read_Tc(lDTime=None, ldydx=None, isurf=None):
             srcDir = '/mnt/j/PMM/stop/data/Tc/%04d/%02d/%02d'%(Year,Mon,Day)
             srcPath1=srcDir + '/Tc1.%ddy.%ddx.%02dsurf.npy'%(dy,dx,isurf)
             srcPath2=srcDir + '/Tc2.%ddy.%ddx.%02dsurf.npy'%(dy,dx,isurf)
-            if not os.path.exists(srcPath1): continue
-            atc1 = np.load(srcPath1)
-            atc2 = np.load(srcPath2)
-            atc  = np.c_[atc1, atc2]
+            if not os.path.exists(srcPath1):
+                print 'No file',srcPath1
+                continue
 
-            try:
-                a2tcTmp = np.c_[a2tcTmp, atc]
-            except ValueError:
+            if ch=='H':
+                atc1 = np.load(srcPath1)
+                atc2 = np.load(srcPath2)
+                atc  = np.c_[atc1, atc2]
+            elif ch=='L':
+                atc  = np.load(srcPath1)
+            else:
+                print 'check ch',ch
+                sys.exit()
+
+            if atc.shape[0]==0:
+                continue
+
+            if a2tcTmp is None:
                 a2tcTmp = atc
+            else:
+                a2tcTmp = np.c_[a2tcTmp, atc]
 
         if a2tcTmp is None:
             continue
         else:
             a2tcTmp = np.array(a2tcTmp)
+
+        #**********************
+        # Resample
+        #**********************
+        if samplerate is not None:
+            np.random.seed(0)  # Do not change !!
+            aidx = np.random.choice(range(a2tcTmp.shape[0]), int(a2tcTmp.shape[0]*samplerate), replace=False)
+
+            a2tcTmp = a2tcTmp[a1idx,:]
         #**********************
         a2tc.extend(a2tcTmp)
 
     return np.array(a2tc)
 
-def read_var_collect(varName=None, lDTime=None, ldydx=None, isurf=None):
+
+def read_var_collect(varName=None, lDTime=None, ldydx=None, isurf=None, samplerate=None):
     a2var = deque([])
     for DTime in lDTime:
         Year,Mon,Day = DTime.timetuple()[:3]
@@ -76,13 +97,29 @@ def read_var_collect(varName=None, lDTime=None, ldydx=None, isurf=None):
             #srcDir = '/work/hk01/utsumi/PMM/stop/data/Tc/%04d/%02d/%02d'%(Year,Mon,Day)
             srcDir = '/mnt/j/PMM/stop/data/%s/%04d/%02d/%02d'%(varName,Year,Mon,Day)
             srcPath=srcDir + '/%s.%ddy.%ddx.%02dsurf.npy'%(varName,dy,dx,isurf)
-            if not os.path.exists(srcPath): continue
+            if not os.path.exists(srcPath):
+                print 'No file',srcPath
+                continue
             avar = np.load(srcPath)
 
-            try:
-                a2varTmp = np.c_[a2varTmp, avar]
-            except ValueError:
+            if avar.shape[0]==0:
+                continue
+
+            if a2varTmp is None:
                 a2varTmp = avar
+            else:
+                a2varTmp = np.c_[a2varTmp, avar]
+
+        #**********************
+        # Resample
+        #**********************
+        if samplerate is not None:
+            np.random.seed(0)  # Do not change !!
+            aidx = np.random.choice(range(a2varTmp.shape[0]), int(a2varTmp.shape[0]*samplerate), replace=False)
+
+            a2varTmp = a2varTmp[a1idx,:]
+        #**********************
+
 
         if a2varTmp is None:
             continue
@@ -91,6 +128,7 @@ def read_var_collect(varName=None, lDTime=None, ldydx=None, isurf=None):
         #**********************
         a2var.extend(a2varTmp)
     return np.array(a2var)
+
 
 def read_pc_coef(isurf):
     #*********************************
